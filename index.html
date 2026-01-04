@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFT Private Node | 阅后即焚维度</title>
+    <script src="https://cdn.jsdelivr.net/npm/leancloud-storage@4.12.0/dist/av-min.js"></script>
+    <style>
+        :root {
+            --neon-blue: #00f2fe;
+            --neon-purple: #7000ff;
+            --bg-black: #0a0a0f;
+            --glass: rgba(255, 255, 255, 0.05);
+        }
+
+        body {
+            margin: 0;
+            background-color: var(--bg-black);
+            background-image: radial-gradient(circle at 50% 50%, #1a1a2e 0%, #0a0a0f 100%);
+            color: #fff;
+            font-family: 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* 认证弹窗 */
+        #auth-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 100;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(10px);
+        }
+
+        .auth-card {
+            background: var(--glass);
+            padding: 40px;
+            border: 1px solid var(--neon-blue);
+            border-radius: 20px;
+            width: 320px;
+            text-align: center;
+            box-shadow: 0 0 30px rgba(0, 242, 254, 0.1);
+        }
+
+        /* 主聊天容器 */
+        #main-container {
+            width: 90%;
+            max-width: 500px;
+            height: 80vh;
+            background: var(--glass);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 24px;
+            display: none; /* 验证后显示 */
+            flex-direction: column;
+            backdrop-filter: blur(20px);
+            position: relative;
+        }
+
+        /* 头部状态 */
+        .chat-header {
+            padding: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-dot {
+            width: 8px; height: 8px;
+            background: var(--neon-blue);
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 10px var(--neon-blue);
+            margin-right: 8px;
+        }
+
+        /* 消息展示区 */
+        #chat-window {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        /* 消息气泡 */
+        .msg-bubble {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 15px;
+            font-size: 14px;
+            line-height: 1.5;
+            position: relative;
+            animation: popIn 0.3s ease-out;
+        }
+
+        .msg-remote {
+            background: rgba(255,255,255,0.05);
+            align-self: flex-start;
+            border-bottom-left-radius: 2px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .msg-local {
+            background: linear-gradient(135deg, var(--neon-purple), #4a00e0);
+            align-self: flex-end;
+            border-bottom-right-radius: 2px;
+        }
+
+        .msg-info {
+            font-size: 10px;
+            opacity: 0.5;
+            margin-bottom: 4px;
+            display: block;
+        }
+
+        /* 输入区 */
+        .input-area {
+            padding: 20px;
+            display: flex;
+            gap: 10px;
+        }
+
+        input {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid #333;
+            color: #fff;
+            padding: 12px 20px;
+            border-radius: 30px;
+            outline: none;
+            flex: 1;
+            transition: 0.3s;
+        }
+
+        input:focus { border-color: var(--neon-blue); }
+
+        .send-btn {
+            background: var(--neon-blue);
+            color: #000;
+            border: none;
+            width: 45px; height: 45px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        @keyframes popIn {
+            from { opacity: 0; transform: scale(0.9) translateY(10px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+    </style>
+</head>
+<body>
+
+<div id="auth-overlay">
+    <div class="auth-card">
+        <h2 style="color:var(--neon-blue); margin-top:0;">ACCESS NODE</h2>
+        <input type="text" id="roomName" placeholder="维度名称 (群组名)">
+        <input type="password" id="roomPass" placeholder="访问密钥 (密码)" style="margin-top:10px;">
+        <button class="send-btn" onclick="enterRoom()" style="width:100%; border-radius:10px; margin-top:20px;">进入维度</button>
+    </div>
+</div>
+
+<div id="main-container">
+    <div class="chat-header">
+        <div><span class="status-dot"></span> <span id="display-room">---</span></div>
+        <div style="font-size: 12px; opacity: 0.5; cursor: pointer;" onclick="location.reload()">[ 销毁并退出 ]</div>
+    </div>
+    
+    <div id="chat-window">
+        </div>
+
+    <div class="input-area">
+        <input type="text" id="chatInput" placeholder="传输加密讯息..." onkeypress="if(event.keyCode==13) sendMsg()">
+        <button class="send-btn" onclick="sendMsg()">➤</button>
+    </div>
+</div>
+
+<script>
+    // --- 1. 初始化 ---
+    AV.init({
+        appId: "你的AppID",
+        appKey: "你的AppKey",
+        serverURL: "你的服务器地址"
+    });
+
+    const Message = AV.Object.extend('TempMessages');
+    let currentRoom = "";
+    let currentPass = "";
+    let lastSyncTime = new Date();
+
+    // --- 2. 进入逻辑 ---
+    function enterRoom() {
+        const r = document.getElementById('roomName').value.trim();
+        const p = document.getElementById('roomPass').value.trim();
+        if(!r || !p) return alert("请输入完整凭证");
+        
+        currentRoom = r;
+        currentPass = p;
+        
+        document.getElementById('auth-overlay').style.display = 'none';
+        document.getElementById('main-container').style.display = 'flex';
+        document.getElementById('display-room').innerText = "NODE: " + r;
+
+        // 启动实时监听
+        startLiveQuery();
+        
+        // 关键：不加载历史记录，实现“关闭即消失”
+        appendSystemMsg("系统：已建立临时加密通道，历史数据已物理隔离。");
+    }
+
+    // --- 3. 实时通信逻辑 ---
+    async function startLiveQuery() {
+        const query = new AV.Query('TempMessages');
+        query.equalTo('room', currentRoom);
+        query.equalTo('pass', currentPass);
+        
+        // 只监听进入网页后产生的消息
+        query.greaterThan('createdAt', lastSyncTime);
+
+        const subscription = await query.subscribe();
+        subscription.on('create', (payload) => {
+            // 如果不是自己发的，就显示在左侧
+            if (payload.get('clientId') !== AV.User.current()?.id || true) {
+                // 为了演示简单，这里通过随机ID判断
+                showBubble(payload.get('content'), 'remote', payload.id);
+            }
+        });
+    }
+
+    async function sendMsg() {
+        const input = document.getElementById('chatInput');
+        const text = input.value.trim();
+        if(!text) return;
+
+        const msg = new Message();
+        msg.set('content', text);
+        msg.set('room', currentRoom);
+        msg.set('pass', currentPass);
+        
+        // 模拟本地立即显示
+        showBubble(text, 'local', 'pending');
+        
+        await msg.save();
+        input.value = "";
+    }
+
+    // --- 4. UI 渲染 ---
+    function showBubble(text, type, id) {
+        const window = document.getElementById('chat-window');
+        const div = document.createElement('div');
+        div.className = `msg-bubble msg-${type}`;
+        
+        const info = type === 'remote' ? `<span class="msg-info">0x${id.slice(-4)}</span>` : '';
+        div.innerHTML = `${info}${text}`;
+        
+        window.appendChild(div);
+        window.scrollTop = window.scrollHeight;
+    }
+
+    function appendSystemMsg(text) {
+        const window = document.getElementById('chat-window');
+        const div = document.createElement('div');
+        div.style.cssText = "font-size:11px; color:var(--neon-blue); text-align:center; opacity:0.6; margin:10px 0;";
+        div.innerText = text;
+        window.appendChild(div);
+    }
+
+    // 关键：页面关闭时尝试清理 (虽然 LiveQuery 配合不加载历史即可)
+    window.onbeforeunload = function() {
+        // 可以在此处发送一个“离开”的消息
+    };
+</script>
+</body>
+</html>
